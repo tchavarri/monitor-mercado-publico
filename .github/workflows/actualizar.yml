@@ -1,0 +1,44 @@
+# Guardar este archivo en el repo como: .github/workflows/actualizar.yml
+name: Actualizar monitor Mercado Público
+
+on:
+  workflow_dispatch:          # ← botón manual "Run workflow" en la pestaña Actions
+  schedule:
+    - cron: "0 10 * * 1-5"   # Lunes a viernes, 10:00 UTC = 07:00 Chile (verano)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: monitor-mp
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install requests pandas matplotlib openpyxl pillow
+
+      - name: Ejecutar monitor
+        env:
+          MP_TICKET: ${{ secrets.MP_TICKET }}
+        run: python monitor_mp.py
+
+      - name: Publicar resultados
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git add docs/
+          git commit -m "Actualización monitor $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "Sin cambios que publicar"
+          git push
