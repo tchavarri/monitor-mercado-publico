@@ -122,6 +122,9 @@ KEYWORDS_POR_CATEGORIA = {
 EXCLUDE_KEYWORDS = [
     "cemento oseo", "cemento dental", "arena sanitaria", "arena para gatos",
     "acero quirurgico", "malla quirurgica", "pintura facial", "pintura corporal",
+    # Falsos positivos del rubro salud detectados en producción
+    "aposito", "fluoruro", "monodosis", "curacion avanzada",
+    "uso clinico", "uso dental",
 ]
 
 CA_QUERIES = [
@@ -452,7 +455,9 @@ if RUN_ORDENES_COMPRA:
                     "CategoriaONU": item.get("Categoria", ""),
                     "CodigoProductoONU": item.get("CodigoProducto", ""),
                     "Cantidad": item.get("Cantidad"),
-                    "Unidad": item.get("Unidad", ""),
+                    # La API usa distintos nombres para la unidad según la versión
+                    "Unidad": (item.get("Unidad") or item.get("UnidadMedida")
+                               or item.get("unidad") or ""),
                     "PrecioNeto": item.get("PrecioNeto"),
                     "TotalLinea": item.get("Total"),
                     "Moneda": item.get("Moneda", det.get("Moneda", "")),
