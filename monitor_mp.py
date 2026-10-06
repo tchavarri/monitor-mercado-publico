@@ -134,7 +134,10 @@ CA_QUERIES = [
 
 
 def normalizar(texto):
-    texto = (texto or "").lower()
+    # A prueba de None y NaN (los CSV releídos convierten vacíos en NaN float)
+    if texto is None or (isinstance(texto, float) and pd.isna(texto)):
+        return ""
+    texto = str(texto).lower()
     texto = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in texto if not unicodedata.combining(c))
 
@@ -488,10 +491,19 @@ if RUN_ORDENES_COMPRA:
     # ---------- Benchmark de precios por producto + unidad (usa el histórico) --
     base_precios = hist if not hist.empty else df_oc_lineas
     if not base_precios.empty:
-        df_clp = base_precios[base_precios["Moneda"].isin(["CLP", "", None])].copy()
+        base_precios = base_precios.copy()
+        # Saneamos columnas de texto que pueden venir como NaN desde el CSV
+        for col in ["Moneda", "Producto", "Unidad"]:
+            if col in base_precios.columns:
+                base_precios[col] = base_precios[col].fillna("").astype(str)
+        df_clp = base_precios[base_precios["Moneda"].isin(["CLP", "", "nan", "None"])].copy()
+        df_clp["PrecioNeto"] = pd.to_numeric(df_clp["PrecioNeto"], errors="coerce")
         df_clp = df_clp[df_clp["PrecioNeto"].notna() & (df_clp["PrecioNeto"] > 0)]
         df_clp["ProductoNorm"] = df_clp["Producto"].apply(normalizar)
-        df_clp["UnidadNorm"] = df_clp["Unidad"].apply(normalizar).replace("", "sin unidad")
+        df_clp["UnidadNorm"] = (
+            df_clp["Unidad"].apply(normalizar)
+            .replace({"": "sin unidad", "none": "sin unidad", "nan": "sin unidad"})
+        )
 
         df_precios = (
             df_clp.groupby(["ProductoNorm", "UnidadNorm"])
