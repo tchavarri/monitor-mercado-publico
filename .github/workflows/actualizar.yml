@@ -4,7 +4,7 @@ name: Actualizar monitor Mercado Público
 on:
   workflow_dispatch:          # ← botón manual "Run workflow" en la pestaña Actions
   schedule:
-    - cron: "0 10 * * 1-5"   # Lunes a viernes, 10:00 UTC = 07:00 Chile (verano)
+      - cron: "37 8 * * 1-5"   # 05:37 Chile (verano), L-V — margen para retrasos de GitHub
 
 permissions:
   contents: write
