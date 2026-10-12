@@ -50,6 +50,10 @@ RUN_ORDENES_COMPRA = True
 OC_DIAS_ATRAS = 5
 OC_ESTADO = "aceptada"   # aceptada = ya validadas por el proveedor
 
+# Benchmark de precios: mínimo de líneas para publicar una referencia.
+# Subirlo da menos referencias pero más sólidas.
+MIN_LINEAS_BENCHMARK = 5
+
 # Carpeta publicada por GitHub Pages
 OUT_DIR = "docs"
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -164,6 +168,150 @@ def categorias_match(nombre):
         if any(re.search(rf"\b{re.escape(normalizar(k))}\b", nombre_norm) for k in lista):
             cats.append(cat)
     return cats
+
+
+# ==========================================================================
+# MOTOR DE PRECIOS — limpieza y normalización de líneas de órdenes de compra
+# --------------------------------------------------------------------------
+# Por qué existe: en Mercado Público el campo "Producto" es el nombre del
+# catálogo ONU (UNSPSC) que elige el comprador, y suele no corresponder a lo
+# que realmente se compró (bajo "Cemento" aparecen lijas, codos PVC, brochas).
+# El producto real está escrito en EspecificacionComprador. Además la API NO
+# devuelve unidad de medida (campo 100% vacío), así que el formato — saco de
+# 25 kg, m3, plancha, galón — también se deduce de ese texto.
+# ==========================================================================
+
+# --- 1. Líneas "canasta": un carro de compras completo en una sola línea ---
+# Ej: "MATERIALES DE FERRETERÍA SEGÚN LISTADO N°8 ADJUNTO A LA OC" por $588.104.
+# No son un precio unitario y arruinan cualquier promedio.
+PATRONES_CANASTA = [
+    r"segun (el )?(listado|detalle|solicitud|requerimiento|memorandum|memo|"
+    r"adjunto|ficha|anexo|orden|sp n|s\.p\.|pedido|cotizacion|presupuesto|"
+    r"especificacion)",
+    r"(listado|detalle|nomina|planilla|set|kit|lote|paquete) "
+    r"(adjunto|anexo|n°|nro|numero)",
+    r"adjunt[oa]s? a la oc", r"archivo adjunto", r"documento adjunto",
+    r"varios (materiales|articulos|productos|items)",
+    r"materiales (de |para )?(construccion|ferreteria|varios)",
+    r"ayuda social", r"caso social", r"orasmi",
+    r"segun (anexo|cuadro|tabla)",
+]
+RE_CANASTA = re.compile("|".join(PATRONES_CANASTA))
+
+# Umbral sobre el cual una línea de cantidad 1 se considera suma alzada
+UMBRAL_CANASTA_CLP = 150000
+
+
+def es_linea_canasta(espec, cantidad, precio):
+    """True si la línea agrupa varios productos en vez de ser un precio unitario."""
+    e = normalizar(espec)
+    if RE_CANASTA.search(e):
+        return True
+    try:
+        if float(cantidad) == 1 and float(precio) > UMBRAL_CANASTA_CLP:
+            return True
+    except (TypeError, ValueError):
+        pass
+    # Varios saltos de línea = lista de productos escrita en un solo campo
+    if str(espec).count("\n") >= 2:
+        return True
+    return False
+
+
+# --- 2. Formato de venta, deducido del texto del comprador ---
+# El orden importa: lo más específico primero (saco 25 kg antes que kg).
+FORMATOS = [
+    # En construcción el formato de 25 kg es el saco, se nombre o no la palabra
+    ("saco 25 kg",    r"\b(saco|bolsa|bsa)s?\b.{0,25}\b25\s*(kg|kilo|k\b)|"
+                      r"25\s*(kg|kilos?)\b.{0,20}\b(saco|bolsa)|"
+                      r"\b25\s*(kg|kilos?)\b"),
+    ("saco 42,5 kg",  r"\b(saco|bolsa)s?\b.{0,25}\b42[,.]?5\s*(kg|kilo)"),
+    ("saco 20 kg",    r"\b(saco|bolsa)s?\b.{0,25}\b20\s*(kg|kilo)|"
+                      r"20\s*kg\b.{0,20}\b(saco|bolsa)"),
+    ("saco 1 kg",     r"\b(saco|bolsa)s?\b.{0,20}\b1\s*(kg|kilo)\b"),
+    ("pallet",        r"\bpallet|\bpaleta\b"),
+    ("galon",         r"\bgal[oó]n(es)?\b|\bgl\b"),
+    ("litro",         r"\b\d+\s*(lt|lts|litros?)\b"),
+    ("m3",            r"\bm\s?3\b|\bm³\b|metros?\s*c[uú]bicos?"),
+    ("m2",            r"\bm\s?2\b|\bm²\b|metros?\s*cuadrados?"),
+    ("metro lineal",  r"\bml\b|metros?\s*lineal|\bmt?s?\b(?!\s*\d)"),
+    ("kg",            r"\b\d+\s*(kg|kilos?)\b"),
+    ("plancha",       r"\bplancha(s)?\b"),
+    ("rollo",         r"\brollo(s)?\b"),
+    ("tira/barra",    r"\b(tira|barra|vara)s?\b"),
+    ("caja",          r"\bcaja(s)?\b"),
+    ("juego/set",     r"\b(juego|set|kit)\b"),
+]
+RE_FORMATOS = [(n, re.compile(p)) for n, p in FORMATOS]
+
+
+def formato_venta(espec):
+    """Saco de 25 kg, m3, plancha, galón... deducido del texto; 'unidad' si no hay pista."""
+    e = normalizar(espec)
+    for nombre, rx in RE_FORMATOS:
+        if rx.search(e):
+            return nombre
+    return "unidad"
+
+
+# --- 3. Material real, leído del texto (no de la clasificación ONU) ---
+MATERIALES = {
+    "cemento":         r"\bcemento\b",
+    "hormigon":        r"\bhormig[oó]n\b|\bconcreto\b",
+    "arena":           r"\barena\b",
+    "gravilla/ripio":  r"\bgravilla\b|\bripio\b|\bgrava\b",
+    "yeso/volcanita":  r"\byeso\b|\bvolcanita\b|yeso[- ]?carton",
+    "ladrillo":        r"\bladrillo",
+    "bloque":          r"\bbloque",
+    "plancha zinc":    r"\bzinc\b|zincalum|\bcinc\b",
+    "fierro/acero":    r"\bfierro\b|\bacero\b|barra.{0,10}(estriada|lisa)|malla acma",
+    "madera pino":     r"\bpino\b|\bmadera\b|\btabla\b|\bterciado\b|\bosb\b|\bmdf\b",
+    "pintura latex":   r"\bl[aá]tex\b",
+    "pintura esmalte": r"\besmalte\b",
+    "tubo pvc":        r"\bpvc\b|ca[ñn]eria",
+    "clavos":          r"\bclavo",
+    "tornillos":       r"\btornillo",
+    "brocha/rodillo":  r"\bbrocha|\brodillo",
+    "silicona/sello":  r"\bsilicona\b|\bsellante\b|\bsellador\b",
+    "impermeabilizante": r"impermeabil|\bsika\b",
+    "lija":            r"\blija",
+}
+RE_MATERIALES = [(n, re.compile(p)) for n, p in MATERIALES.items()]
+
+
+def material_real(espec):
+    """Material identificado en el texto del comprador, o None si no se reconoce."""
+    e = normalizar(espec)
+    for nombre, rx in RE_MATERIALES:
+        if rx.search(e):
+            return nombre
+    return None
+
+
+# --- 4. Dimensión (2x4, 18mm, 3/4...) — clave en madera, fierro y tubería ---
+RE_DIMENSION = re.compile(
+    r"(\d+\s?[x×]\s?\d+(\s?[x×]\s?\d+([,.]\d+)?)?)|(\b\d+\s?mm\b)|(\b\d+/\d+\b)"
+)
+MATERIALES_CON_DIMENSION = {
+    "madera pino", "fierro/acero", "tubo pvc", "plancha zinc", "yeso/volcanita",
+}
+
+
+def dimension(espec, material):
+    """Medida del producto cuando el material la necesita para ser comparable."""
+    if material not in MATERIALES_CON_DIMENSION:
+        return ""
+    m = RE_DIMENSION.search(normalizar(espec))
+    return m.group(0).replace(" ", "") if m else ""
+
+
+def recortar_outliers(serie):
+    """Descarta valores fuera del rango intercuartil ampliado (regla 1,5 x IQR)."""
+    if len(serie) < 5:
+        return serie
+    q1, q3 = serie.quantile(0.25), serie.quantile(0.75)
+    iqr = q3 - q1
+    return serie[(serie >= q1 - 1.5 * iqr) & (serie <= q3 + 1.5 * iqr)]
 
 
 # ----------------------- HELPERS HTTP -------------------------------------
@@ -401,6 +549,7 @@ if RUN_COMPRA_AGIL:
 # ==========================================================================
 df_oc = pd.DataFrame()
 df_oc_lineas = pd.DataFrame()
+df_oc_limpias = pd.DataFrame()
 df_precios = pd.DataFrame()
 
 if RUN_ORDENES_COMPRA:
@@ -471,73 +620,102 @@ if RUN_ORDENES_COMPRA:
     df_oc_lineas = pd.DataFrame(filas_oc_lineas)
 
     # ---------- Histórico acumulado de líneas de OC (crece en cada corrida) ----
-    if not df_oc_lineas.empty:
-        try:
-            if os.path.exists(HIST_PATH):
-                hist = pd.read_csv(HIST_PATH)
-                hist = pd.concat([hist, df_oc_lineas], ignore_index=True)
-                hist = hist.drop_duplicates(
-                    subset=["CodigoOC", "Producto", "Cantidad", "PrecioNeto"])
-            else:
-                hist = df_oc_lineas.copy()
+    # Se carga siempre, incluso si la corrida no trajo líneas nuevas: así el
+    # benchmark sigue publicándose un fin de semana o si la API falla.
+    hist = pd.DataFrame()
+    try:
+        if os.path.exists(HIST_PATH):
+            hist = pd.read_csv(HIST_PATH)
+        if not df_oc_lineas.empty:
+            hist = (pd.concat([hist, df_oc_lineas], ignore_index=True)
+                    if not hist.empty else df_oc_lineas.copy())
+            hist = hist.drop_duplicates(
+                subset=["CodigoOC", "Producto", "Cantidad", "PrecioNeto"])
             hist.to_csv(HIST_PATH, index=False)
-            print(f"  Histórico acumulado: {len(hist)} líneas en {HIST_PATH}")
-        except Exception as e:
-            print(f"  (No se pudo actualizar el histórico: {e})")
-            hist = df_oc_lineas.copy()
-    else:
-        hist = pd.DataFrame()
+        print(f"  Histórico acumulado: {len(hist)} líneas en {HIST_PATH}")
+    except Exception as e:
+        print(f"  (No se pudo actualizar el histórico: {e})")
+        hist = df_oc_lineas.copy()
 
-    # ---------- Benchmark de precios por producto + unidad (usa el histórico) --
+    # ---------- Benchmark de precios: material x formato x dimensión ----------
     base_precios = hist if not hist.empty else df_oc_lineas
     if not base_precios.empty:
-        base_precios = base_precios.copy()
-        # Saneamos columnas de texto que pueden venir como NaN desde el CSV
-        for col in ["Moneda", "Producto", "Unidad"]:
-            if col in base_precios.columns:
-                base_precios[col] = base_precios[col].fillna("").astype(str)
-        df_clp = base_precios[base_precios["Moneda"].isin(["CLP", "", "nan", "None"])].copy()
-        df_clp["PrecioNeto"] = pd.to_numeric(df_clp["PrecioNeto"], errors="coerce")
-        df_clp = df_clp[df_clp["PrecioNeto"].notna() & (df_clp["PrecioNeto"] > 0)]
-        df_clp["ProductoNorm"] = df_clp["Producto"].apply(normalizar)
-        df_clp["UnidadNorm"] = (
-            df_clp["Unidad"].apply(normalizar)
-            .replace({"": "sin unidad", "none": "sin unidad", "nan": "sin unidad"})
-        )
+        b = base_precios.copy()
+        for col in ["Moneda", "Producto", "EspecificacionComprador", "Region"]:
+            if col in b.columns:
+                b[col] = b[col].fillna("").astype(str)
+        b = b[b["Moneda"].isin(["CLP", "", "nan", "None"])]
+        b["PrecioNeto"] = pd.to_numeric(b["PrecioNeto"], errors="coerce")
+        b["Cantidad"] = pd.to_numeric(b["Cantidad"], errors="coerce")
+        b = b[b["PrecioNeto"].notna() & (b["PrecioNeto"] > 0)]
+        n_bruto = len(b)
 
-        df_precios = (
-            df_clp.groupby(["ProductoNorm", "UnidadNorm"])
-            .agg(
-                Producto=("Producto", "first"),
-                Unidad=("Unidad", "first"),
-                NumOC=("CodigoOC", "nunique"),
-                NumLineas=("Producto", "size"),
-                CantidadTotal=("Cantidad", "sum"),
-                PrecioMin=("PrecioNeto", "min"),
-                PrecioMediana=("PrecioNeto", "median"),
-                PrecioPromedio=("PrecioNeto", "mean"),
-                PrecioMax=("PrecioNeto", "max"),
-                DesvEst=("PrecioNeto", "std"),
+        # Paso 1: descartar líneas canasta (suma alzada, no precio unitario)
+        b["EsCanasta"] = [
+            es_linea_canasta(e, c, p)
+            for e, c, p in zip(b["EspecificacionComprador"], b["Cantidad"], b["PrecioNeto"])
+        ]
+        n_canasta = int(b["EsCanasta"].sum())
+        b = b[~b["EsCanasta"]]
+
+        # Paso 2: leer material, formato y dimensión del texto del comprador
+        b["Material"] = b["EspecificacionComprador"].map(material_real)
+        b["Formato"] = b["EspecificacionComprador"].map(formato_venta)
+        b["Dimension"] = [
+            dimension(e, m) for e, m in zip(b["EspecificacionComprador"], b["Material"])
+        ]
+        df_oc_limpias = b[b["Material"].notna()].copy()
+
+        # Paso 3: agrupar y recortar outliers dentro de cada grupo
+        filas_bench = []
+        for (mat, fmt, dim), sub in df_oc_limpias.groupby(
+                ["Material", "Formato", "Dimension"], dropna=False):
+            if len(sub) < MIN_LINEAS_BENCHMARK:
+                continue
+            precios = recortar_outliers(sub["PrecioNeto"])
+            if len(precios) < 3:
+                continue
+            prom = precios.mean()
+            cv = (precios.std() / prom) if prom and len(precios) > 1 else 0
+            filas_bench.append({
+                "Material": mat,
+                "Formato": fmt,
+                "Dimension": dim,
+                "NumOC": sub["CodigoOC"].nunique(),
+                "NumLineas": len(precios),
+                "Descartadas": len(sub) - len(precios),
+                "PrecioP25": round(precios.quantile(0.25)),
+                "PrecioMediana": round(precios.median()),
+                # La API entrega precios netos; este es el equivalente bruto
+                # para comparar contra precios de retail (que incluyen IVA)
+                "MedianaConIVA": round(precios.median() * 1.19),
+                "PrecioP75": round(precios.quantile(0.75)),
+                "PrecioMin": round(precios.min()),
+                "PrecioMax": round(precios.max()),
+                "CV": round(cv, 2),
+                "EjemploEspecificacion": str(
+                    sub["EspecificacionComprador"].iloc[0])[:90],
+            })
+
+        df_precios = pd.DataFrame(filas_bench)
+        if not df_precios.empty:
+            df_precios["Confiabilidad"] = pd.cut(
+                df_precios["CV"],
+                bins=[-0.01, 0.3, 0.8, float("inf")],
+                labels=["Alta", "Media", "Baja (revisar)"],
             )
-            .reset_index(drop=True)
-        )
-        df_precios["CV"] = (
-            (df_precios["DesvEst"] / df_precios["PrecioPromedio"])
-            .fillna(0).round(2)
-        )
-        df_precios["Confiabilidad"] = pd.cut(
-            df_precios["CV"],
-            bins=[-0.01, 0.3, 0.8, float("inf")],
-            labels=["Alta", "Media", "Baja (revisar)"],
-        )
-        df_precios["PrecioMediana"] = df_precios["PrecioMediana"].round(0)
-        df_precios["PrecioPromedio"] = df_precios["PrecioPromedio"].round(0)
-        df_precios = df_precios.drop(columns=["DesvEst"]).sort_values(
-            "NumLineas", ascending=False).reset_index(drop=True)
+            df_precios = df_precios.sort_values(
+                ["Confiabilidad", "NumLineas"], ascending=[True, False]
+            ).reset_index(drop=True)
 
         print(f"\nOCs de construcción encontradas: {len(df_oc)}")
-        print(f"Líneas con precio (CLP, histórico): {len(df_clp)}")
-        print(f"Combinaciones producto+unidad: {len(df_precios)}")
+        print(f"Líneas con precio (CLP, histórico): {n_bruto}")
+        print(f"  - descartadas por ser canasta/suma alzada: {n_canasta}")
+        print(f"  - con material identificado en la especificación: {len(df_oc_limpias)}")
+        print(f"Referencias de precio (material x formato x dimensión): {len(df_precios)}")
+        if not df_precios.empty:
+            n_alta = int((df_precios["Confiabilidad"] == "Alta").sum())
+            print(f"  de ellas, confiabilidad Alta: {n_alta}")
 
 
 # ==========================================================================
@@ -554,8 +732,16 @@ if not df_ca.empty:
 if not df_oc.empty:
     hojas["OC_Resumen"] = df_oc
     hojas["OC_Lineas"] = df_oc_lineas
-    if not df_precios.empty:
-        hojas["Precios_Productos"] = df_precios
+# Las hojas de precios salen del histórico, no de las OCs de hoy
+if not df_precios.empty:
+    hojas["Precios_Productos"] = df_precios
+if not df_oc_limpias.empty:
+    # Trazabilidad: las líneas que alimentan cada referencia de precio
+    hojas["Precios_Detalle"] = df_oc_limpias[[
+        "CodigoOC", "FechaEnvio", "Region", "Proveedor", "Material",
+        "Formato", "Dimension", "Cantidad", "PrecioNeto",
+        "EspecificacionComprador", "Producto",
+    ]]
 
 grafico_ok = False
 if not df_lic.empty:
@@ -639,6 +825,8 @@ n_ca = len(df_ca)
 monto_ca = fmt_clp(df_ca["MontoDisponibleCLP"].fillna(0).sum()) if not df_ca.empty else "$0"
 n_oc = len(df_oc)
 n_prod = len(df_precios)
+n_alta_conf = (int((df_precios["Confiabilidad"] == "Alta").sum())
+               if not df_precios.empty else 0)
 
 html = f"""<!doctype html>
 <html lang="es">
@@ -672,6 +860,7 @@ html = f"""<!doctype html>
                  text-decoration:none; padding:10px 18px; border-radius:8px;
                  margin-right:10px; font-size:.9rem; }}
   .vacio {{ color:#888; }}
+  .nota {{ font-size:.82rem; color:#555; margin:0 0 12px; line-height:1.45; }}
   footer {{ text-align:center; color:#888; font-size:.8rem; padding:20px; }}
 </style>
 </head>
@@ -687,7 +876,8 @@ html = f"""<!doctype html>
     <div class="kpi"><div class="v">{n_ca}</div><div class="l">Compras Ágiles RM publicadas</div></div>
     <div class="kpi"><div class="v">{monto_ca}</div><div class="l">Monto disponible Compra Ágil</div></div>
     <div class="kpi"><div class="v">{n_oc}</div><div class="l">OCs analizadas (precios)</div></div>
-    <div class="kpi"><div class="v">{n_prod}</div><div class="l">Productos en benchmark</div></div>
+    <div class="kpi"><div class="v">{n_prod}</div><div class="l">Precios de referencia</div></div>
+    <div class="kpi"><div class="v">{n_alta_conf}</div><div class="l">De confiabilidad alta</div></div>
   </div>
 
   <section class="acciones">
@@ -715,9 +905,20 @@ html = f"""<!doctype html>
   </section>
 
   <section>
-    <h2>Benchmark de precios (producto + unidad, top 50 — histórico acumulado)</h2>
-    {tabla_html(df_precios, cols_monto=["PrecioMin", "PrecioMediana",
-                "PrecioPromedio", "PrecioMax"], max_rows=50)}
+    <h2>Precios de referencia (histórico acumulado)</h2>
+    <p class="nota">Precio unitario en CLP por material y formato de venta.
+    Usa la <b>mediana</b> como referencia. Los precios de Mercado Público son
+    <b>netos</b>; la columna <b>MedianaConIVA</b> es el equivalente bruto, para
+    comparar contra precios de retail. Se excluyen las líneas de suma alzada
+    ("según listado adjunto") y los valores atípicos de cada grupo.
+    Confiabilidad <b>Alta</b> = precios muy consistentes entre sí.</p>
+    {tabla_html(
+        df_precios[["Material", "Formato", "Dimension", "Confiabilidad",
+                    "NumOC", "NumLineas", "PrecioP25", "PrecioMediana",
+                    "MedianaConIVA", "PrecioP75", "CV", "EjemploEspecificacion"]]
+        if not df_precios.empty else df_precios,
+        cols_monto=["PrecioP25", "PrecioMediana", "MedianaConIVA",
+                    "PrecioP75"], max_rows=60)}
   </section>
 </main>
 <footer>Fuente: API Mercado Público (ChileCompra) · Generado automáticamente con GitHub Actions</footer>
@@ -727,3 +928,4 @@ html = f"""<!doctype html>
 with open(HTML_PATH, "w", encoding="utf-8") as f:
     f.write(html)
 print(f"✅ Dashboard generado en {HTML_PATH}")
+
