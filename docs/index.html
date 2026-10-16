@@ -31,30 +31,35 @@
                  margin-right:10px; font-size:.9rem; }
   .vacio { color:#888; }
   .nota { font-size:.82rem; color:#555; margin:0 0 12px; line-height:1.45; }
+  .leyenda { font-size:.82rem; color:#444; line-height:1.5; margin-top:14px;
+              padding:12px 14px; background:#f7f9fb;
+              border-left:3px solid var(--azul); border-radius:0 8px 8px 0; }
+  .leyenda ul { margin:8px 0 8px; padding-left:20px; }
+  .leyenda li { margin-bottom:4px; }
   footer { text-align:center; color:#888; font-size:.8rem; padding:20px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Monitor Mercado Público — Materiales de Construcción (RM)</h1>
-  <p>Última actualización: 16-10-2026 06:52 (hora de Chile)</p>
+  <p>Última actualización: 16-10-2026 09:37 (hora de Chile)</p>
 </header>
 <main>
   <div class="kpis">
     <div class="kpi"><div class="v">7</div><div class="l">Licitaciones RM publicadas</div></div>
     <div class="kpi"><div class="v">$61.279.000</div><div class="l">Monto estimado licitaciones</div></div>
-    <div class="kpi"><div class="v">14</div><div class="l">Compras Ágiles RM publicadas</div></div>
-    <div class="kpi"><div class="v">$42.944.652</div><div class="l">Monto disponible Compra Ágil</div></div>
-    <div class="kpi"><div class="v">204</div><div class="l">OCs analizadas (precios)</div></div>
+    <div class="kpi"><div class="v">5</div><div class="l">Compras Ágiles RM publicadas</div></div>
+    <div class="kpi"><div class="v">$12.028.500</div><div class="l">Monto disponible Compra Ágil</div></div>
+    <div class="kpi"><div class="v">202</div><div class="l">OCs analizadas (precios)</div></div>
     <div class="kpi"><div class="v">66</div><div class="l">Precios de referencia</div></div>
     <div class="kpi"><div class="v">25</div><div class="l">De confiabilidad alta</div></div>
   </div>
-
+ 
   <section class="acciones">
     <a href="mercado_publico_construccion_RM.xlsx">⬇ Descargar Excel completo</a>
     <a href="historico_oc_lineas.csv">⬇ Histórico de precios (CSV)</a>
   </section>
-
+ 
   <section>
     <h2>Licitaciones RM (estado Publicada)</h2>
     <table class="dataframe tabla">
@@ -160,12 +165,12 @@
   </tbody>
 </table>
   </section>
-
+ 
   <section>
     <h2>Gráfico: monto y días para cierre</h2>
     <img src="grafico_licitaciones.png" alt="Gráfico licitaciones">
   </section>
-
+ 
   <section>
     <h2>Compras Ágiles RM (publicadas)</h2>
     <table class="dataframe tabla">
@@ -174,6 +179,9 @@
       <th>Codigo</th>
       <th>Nombre</th>
       <th>Organismo</th>
+      <th>Llamado</th>
+      <th>CierrePrimerLlamado</th>
+      <th>CierreSegundoLlamado</th>
       <th>DiasParaCierre</th>
       <th>MontoDisponibleCLP</th>
       <th>OfertasRecibidas</th>
@@ -185,6 +193,9 @@
       <td>2395-1022-COT26</td>
       <td>(Sol. Ped. 1045) Material de Ferreteria, SAPU CESFAM LVN</td>
       <td>I MUNICIPALIDAD PEDRO AGUIRRE CERDA</td>
+      <td>Primer llamado</td>
+      <td>16-10-2026 18:00</td>
+      <td>17-10-2026 18:27</td>
       <td>0</td>
       <td>$180.000</td>
       <td>1</td>
@@ -194,105 +205,33 @@
       <td>5178-5112-COT26</td>
       <td>ART DE FERRETERIA/SP&nbsp;&nbsp;1073252/BA</td>
       <td>UNIVERSIDAD DE CHILE</td>
+      <td>Primer llamado</td>
+      <td>16-10-2026 15:00</td>
+      <td>17-10-2026 15:31</td>
       <td>0</td>
       <td>$200.000</td>
       <td>1</td>
       <td>ferreteria_general</td>
     </tr>
     <tr>
-      <td>2788-516-COT26</td>
-      <td>MATERIAL DE FERRETERIA - DIRECCION DE ASEO Y ORNATO</td>
-      <td>I MUNICIPALIDAD DE PAINE</td>
-      <td>0</td>
-      <td>$7.172.100</td>
-      <td>9</td>
-      <td>ferreteria_general</td>
-    </tr>
-    <tr>
-      <td>2788-512-COT26</td>
-      <td>MATERIAL DE FERRETERIA - DIRECCION DE ASEO Y ORNATO</td>
-      <td>I MUNICIPALIDAD DE PAINE</td>
-      <td>0</td>
-      <td>$5.500.000</td>
-      <td>5</td>
-      <td>ferreteria_general</td>
-    </tr>
-    <tr>
-      <td>2422-672-COT26</td>
-      <td>SOL. ADQ. 945060 PERFILES DE FIERRO Y PLANCHA DE LATA</td>
-      <td>I MUNICIPALIDAD DE PUENTE ALTO</td>
-      <td>0</td>
-      <td>$7.182.387</td>
-      <td>7</td>
-      <td>acero_metal</td>
-    </tr>
-    <tr>
-      <td>551032-41-COT26</td>
-      <td>ORASMI ID 93 - GIFTCARD DIGITAL PARA FERRETERIA</td>
-      <td>DELEGACIÓN PRESIDENCIAL PROVINCIAL DE MAIPO</td>
-      <td>0</td>
-      <td>$140.000</td>
-      <td>2</td>
-      <td>ferreteria_general</td>
-    </tr>
-    <tr>
-      <td>1362-9-COT26</td>
-      <td>ADQUISICION DE MATERIALES&nbsp;&nbsp;DE FERRETERIA,&nbsp;&nbsp;QUE SERAN UTILIZADOS PARA MANTENCION, REPARACION CAMPAMENTO OFICINA PROVINCIAL DE VIALIDAD, PROVINCIA DE TALAGANTE, REGION METROPOLITANA.</td>
-      <td>MINISTERIO DE OBRAS PUBLICAS DIREC CION GRAL DE OO PP DCYF</td>
-      <td>0</td>
-      <td>$2.900.000</td>
-      <td>4</td>
-      <td>ferreteria_general</td>
-    </tr>
-    <tr>
-      <td>625-352-COT26</td>
-      <td>304_183161/2026_ART. FERRETERIA</td>
-      <td>FUERZA AEREA DE CHILE COMANDO LOGISTICO</td>
-      <td>0</td>
-      <td>$321.664</td>
-      <td>5</td>
-      <td>ferreteria_general</td>
-    </tr>
-    <tr>
       <td>2395-1002-COT26</td>
       <td>(Sol. Ped. 976) Material de Ferreteria , Programa MAIS, CESFAM Amador Neghme</td>
       <td>I MUNICIPALIDAD PEDRO AGUIRRE CERDA</td>
+      <td>Segundo llamado</td>
+      <td>15-10-2026 10:00</td>
+      <td>17-10-2026 02:39</td>
       <td>0</td>
       <td>$900.000</td>
       <td>0</td>
       <td>ferreteria_general</td>
     </tr>
     <tr>
-      <td>729-76-COT26</td>
-      <td>ARTICULOS DE FERRETERIA PARA METRO - 20020235 20020164 NBB</td>
-      <td>EMPRESA DE TRANSPORTE DE PASAJEROS METRO S A</td>
-      <td>0</td>
-      <td>$1</td>
-      <td>1</td>
-      <td>ferreteria_general</td>
-    </tr>
-    <tr>
-      <td>1057476-233-COT26</td>
-      <td>adquisición de sacos de aserrín tipo viruta (viruta de madera) y sacos de arena fina.</td>
-      <td>INSTITUTO PSIQUIATRICO DR JOSE HORWITZ BARAK</td>
-      <td>0</td>
-      <td>$700.000</td>
-      <td>2</td>
-      <td>aridos</td>
-    </tr>
-    <tr>
-      <td>777304-3307-COT26</td>
-      <td>INS109079 VENDA YESO 5CM X2,7MT</td>
-      <td>HOSPITAL CLINICO METROPOLITANO DE LA FLORIDA DOCTORA ELOISA DIAZ</td>
-      <td>0</td>
-      <td>$7.000.000</td>
-      <td>11</td>
-      <td>albanileria</td>
-    </tr>
-    <tr>
       <td>2686-509-COT26</td>
       <td>ADQUISICIÓN DE MATERIALES DE FERRETERÍA Y CONSTRUCCIÓN</td>
       <td>I MUNICIPALIDAD DE COLINA</td>
+      <td>Primer llamado</td>
+      <td>19-10-2026 15:00</td>
+      <td>23-10-2026 12:39</td>
       <td>3</td>
       <td>$7.000.000</td>
       <td>2</td>
@@ -302,6 +241,9 @@
       <td>979-128-COT26</td>
       <td>CONTRATACIÓN SERVICIO DE ENSAYO DE APTITUD PARA LAS AREAS DE HORMIGON, GEOTECNIA Y MEZCLAS&nbsp;&nbsp;ASFALTICAS DEL LA BORATORIO NACIONAL DE VIALIDAD</td>
       <td>MINISTERIO DE OBRAS PUBLICAS DIREC CION GRAL DE OO PP DCYF</td>
+      <td>Primer llamado</td>
+      <td>20-10-2026 15:00</td>
+      <td>25-10-2026 19:25</td>
       <td>4</td>
       <td>$3.748.500</td>
       <td>1</td>
@@ -309,8 +251,23 @@
     </tr>
   </tbody>
 </table>
+    <div class="leyenda">
+      <b>Cómo leer los llamados.</b> Una Compra Ágil se puede ofertar en hasta
+      dos llamados. Lo primero que hay que mirar es la columna
+      <b>CierreSegundoLlamado</b>:
+      <ul>
+        <li><b>"No tiene segundo llamado"</b> → la única oportunidad de ofertar
+        es el primer llamado. Si esa fecha ya pasó, quedó fuera de plazo.</li>
+        <li><b>Una fecha y hora</b> → sí hay segundo llamado, y ese es tu plazo
+        real para ofertar, aunque el primero ya esté cerrado.</li>
+      </ul>
+      La columna <b>Llamado</b> dice en cuál está abierta en este momento
+      ("Primer llamado" o "Segundo llamado"), y <b>DiasParaCierre</b> cuenta los
+      días hasta el cierre de ese llamado vigente — no hasta el primero.
+      Las horas están en hora de Chile.
+    </div>
   </section>
-
+ 
   <section>
     <h2>Precios de referencia (histórico acumulado)</h2>
     <p class="nota">Precio unitario en CLP por material y formato de venta.
