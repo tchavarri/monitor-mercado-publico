@@ -16,13 +16,15 @@ except Exception:
 import time
 import re
 import unicodedata
- 
+from html import escape as escape_html
+from urllib.parse import quote
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from openpyxl.drawing.image import Image as XLImage
- 
+
 # ----------------------- CONFIGURACIÓN GENERAL ----------------------------
 TICKET = os.environ.get("MP_TICKET", "").strip()
 if not TICKET:
@@ -32,28 +34,28 @@ if not TICKET:
         "New repository secret, nombre MP_TICKET.\n"
         "- En local/Colab: os.environ['MP_TICKET'] = 'TU_TICKET' antes de correr."
     )
- 
+
 BASE_V1 = "https://api.mercadopublico.cl/servicios/v1/publico"
 URL_LICITACIONES = f"{BASE_V1}/licitaciones.json"
 URL_OC = f"{BASE_V1}/ordenesdecompra.json"
 BASE_V2 = "https://api2.mercadopublico.cl"
- 
+
 HEADERS_V1 = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 HEADERS_V2 = {"User-Agent": HEADERS_V1["User-Agent"], "ticket": TICKET}
- 
+
 # Activa/desactiva módulos
 RUN_LICITACIONES = True
 RUN_COMPRA_AGIL = True
 RUN_ORDENES_COMPRA = True
- 
+
 # Órdenes de compra: cuántos días hacia atrás analizar (precios históricos)
 OC_DIAS_ATRAS = 5
 OC_ESTADO = "aceptada"   # aceptada = ya validadas por el proveedor
- 
+
 # Benchmark de precios: mínimo de líneas para publicar una referencia.
 # Subirlo da menos referencias pero más sólidas.
 MIN_LINEAS_BENCHMARK = 5
- 
+
 # Carpeta publicada por GitHub Pages
 OUT_DIR = "docs"
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -61,7 +63,12 @@ EXCEL_PATH = os.path.join(OUT_DIR, "mercado_publico_construccion_RM.xlsx")
 GRAFICO_PATH = os.path.join(OUT_DIR, "grafico_licitaciones.png")
 HTML_PATH = os.path.join(OUT_DIR, "index.html")
 HIST_PATH = os.path.join(OUT_DIR, "historico_oc_lineas.csv")
- 
+
+# Fichas públicas de Mercado Público (el código externo va en la URL)
+URL_FICHA_LICITACION = ("https://www.mercadopublico.cl/Procurement/Modules/RFB/"
+                        "DetailsAcquisition.aspx?idlicitacion={codigo}")
+URL_FICHA_COMPRA_AGIL = "https://buscador.mercadopublico.cl/ficha?code={codigo}"
+
 # ----------------------- KEYWORDS (motor común) ---------------------------
 KEYWORDS_POR_CATEGORIA = {
     "cemento_hormigon": [
@@ -122,7 +129,7 @@ KEYWORDS_POR_CATEGORIA = {
         "aislacion acustica", "espuma poliuretano",
     ],
 }
- 
+
 EXCLUDE_KEYWORDS = [
     "cemento oseo", "cemento dental", "arena sanitaria", "arena para gatos",
     "acero quirurgico", "malla quirurgica", "pintura facial", "pintura corporal",
@@ -130,13 +137,13 @@ EXCLUDE_KEYWORDS = [
     "aposito", "fluoruro", "monodosis", "curacion avanzada",
     "uso clinico", "uso dental",
 ]
- 
+
 CA_QUERIES = [
     "materiales de construccion", "ferreteria", "cemento", "fierro",
     "madera", "pintura", "hormigon", "ladrillo", "yeso", "zinc",
 ]
- 
- 
+
+
 def normalizar(texto):
     # A prueba de None y NaN (los CSV releídos convierten vacíos en NaN float)
     if texto is None or (isinstance(texto, float) and pd.isna(texto)):
@@ -144,23 +151,23 @@ def normalizar(texto):
     texto = str(texto).lower()
     texto = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in texto if not unicodedata.combining(c))
- 
- 
+
+
 KEYWORDS = sorted({
     normalizar(k)
     for lista in KEYWORDS_POR_CATEGORIA.values()
     for k in lista
 })
 EXCLUDE_KEYWORDS_NORM = [normalizar(k) for k in EXCLUDE_KEYWORDS]
- 
- 
+
+
 def matchea_construccion(nombre):
     nombre_norm = normalizar(nombre)
     if any(ex in nombre_norm for ex in EXCLUDE_KEYWORDS_NORM):
         return False
     return any(re.search(rf"\b{re.escape(k)}\b", nombre_norm) for k in KEYWORDS)
- 
- 
+
+
 def categorias_match(nombre):
     nombre_norm = normalizar(nombre)
     cats = []
@@ -168,8 +175,8 @@ def categorias_match(nombre):
         if any(re.search(rf"\b{re.escape(normalizar(k))}\b", nombre_norm) for k in lista):
             cats.append(cat)
     return cats
- 
- 
+
+
 # ==========================================================================
 # MOTOR DE PRECIOS — limpieza y normalización de líneas de órdenes de compra
 # --------------------------------------------------------------------------
@@ -180,7 +187,7 @@ def categorias_match(nombre):
 # devuelve unidad de medida (campo 100% vacío), así que el formato — saco de
 # 25 kg, m3, plancha, galón — también se deduce de ese texto.
 # ==========================================================================
- 
+
 # --- 1. Líneas "canasta": un carro de compras completo en una sola línea ---
 # Ej: "MATERIALES DE FERRETERÍA SEGÚN LISTADO N°8 ADJUNTO A LA OC" por $588.104.
 # No son un precio unitario y arruinan cualquier promedio.
@@ -197,11 +204,11 @@ PATRONES_CANASTA = [
     r"segun (anexo|cuadro|tabla)",
 ]
 RE_CANASTA = re.compile("|".join(PATRONES_CANASTA))
- 
+
 # Umbral sobre el cual una línea de cantidad 1 se considera suma alzada
 UMBRAL_CANASTA_CLP = 150000
- 
- 
+
+
 def es_linea_canasta(espec, cantidad, precio):
     """True si la línea agrupa varios productos en vez de ser un precio unitario."""
     e = normalizar(espec)
@@ -216,8 +223,8 @@ def es_linea_canasta(espec, cantidad, precio):
     if str(espec).count("\n") >= 2:
         return True
     return False
- 
- 
+
+
 # --- 2. Formato de venta, deducido del texto del comprador ---
 # El orden importa: lo más específico primero (saco 25 kg antes que kg).
 FORMATOS = [
@@ -243,8 +250,8 @@ FORMATOS = [
     ("juego/set",     r"\b(juego|set|kit)\b"),
 ]
 RE_FORMATOS = [(n, re.compile(p)) for n, p in FORMATOS]
- 
- 
+
+
 def formato_venta(espec):
     """Saco de 25 kg, m3, plancha, galón... deducido del texto; 'unidad' si no hay pista."""
     e = normalizar(espec)
@@ -252,8 +259,8 @@ def formato_venta(espec):
         if rx.search(e):
             return nombre
     return "unidad"
- 
- 
+
+
 # --- 3. Material real, leído del texto (no de la clasificación ONU) ---
 MATERIALES = {
     "cemento":         r"\bcemento\b",
@@ -277,8 +284,8 @@ MATERIALES = {
     "lija":            r"\blija",
 }
 RE_MATERIALES = [(n, re.compile(p)) for n, p in MATERIALES.items()]
- 
- 
+
+
 def material_real(espec):
     """Material identificado en el texto del comprador, o None si no se reconoce."""
     e = normalizar(espec)
@@ -286,8 +293,8 @@ def material_real(espec):
         if rx.search(e):
             return nombre
     return None
- 
- 
+
+
 # --- 4. Dimensión (2x4, 18mm, 3/4...) — clave en madera, fierro y tubería ---
 RE_DIMENSION = re.compile(
     r"(\d+\s?[x×]\s?\d+(\s?[x×]\s?\d+([,.]\d+)?)?)|(\b\d+\s?mm\b)|(\b\d+/\d+\b)"
@@ -295,16 +302,16 @@ RE_DIMENSION = re.compile(
 MATERIALES_CON_DIMENSION = {
     "madera pino", "fierro/acero", "tubo pvc", "plancha zinc", "yeso/volcanita",
 }
- 
- 
+
+
 def dimension(espec, material):
     """Medida del producto cuando el material la necesita para ser comparable."""
     if material not in MATERIALES_CON_DIMENSION:
         return ""
     m = RE_DIMENSION.search(normalizar(espec))
     return m.group(0).replace(" ", "") if m else ""
- 
- 
+
+
 def fecha_hora_legible(valor):
     """ISO-8601 de la API -> 'dd-mm-aaaa HH:MM' en hora de Chile. '' si no hay dato."""
     if not valor:
@@ -316,8 +323,8 @@ def fecha_hora_legible(valor):
     if f.tzinfo is not None:
         f = f.astimezone(TZ_CHILE)
     return f.strftime("%d-%m-%Y %H:%M")
- 
- 
+
+
 def recortar_outliers(serie):
     """Descarta valores fuera del rango intercuartil ampliado (regla 1,5 x IQR)."""
     if len(serie) < 5:
@@ -325,8 +332,8 @@ def recortar_outliers(serie):
     q1, q3 = serie.quantile(0.25), serie.quantile(0.75)
     iqr = q3 - q1
     return serie[(serie >= q1 - 1.5 * iqr) & (serie <= q3 + 1.5 * iqr)]
- 
- 
+
+
 # ----------------------- HELPERS HTTP -------------------------------------
 def get_v1(url, params, intentos=4, timeout=20):
     """GET a la API v1 (ticket como parámetro GET)."""
@@ -344,8 +351,8 @@ def get_v1(url, params, intentos=4, timeout=20):
             print(f"    (v1) Intento {intento+1} falló: {e}")
             time.sleep(5)
     return None
- 
- 
+
+
 def get_v2(path, params=None, intentos=3, timeout=40):
     """GET a la API v2 Compra Ágil (ticket en header). Maneja cuota diaria."""
     for intento in range(intentos):
@@ -369,14 +376,14 @@ def get_v2(path, params=None, intentos=3, timeout=40):
             print(f"    (v2) Intento {intento+1} falló: {e}")
             time.sleep(5)
     return None
- 
- 
+
+
 # ==========================================================================
 # MÓDULO 1: LICITACIONES
 # ==========================================================================
 df_lic = pd.DataFrame()
 df_lineas = pd.DataFrame()
- 
+
 if RUN_LICITACIONES:
     print("=" * 60)
     print("MÓDULO 1: LICITACIONES ACTIVAS")
@@ -384,10 +391,10 @@ if RUN_LICITACIONES:
     data = get_v1(URL_LICITACIONES, {"estado": "activas"})
     activas = data.get("Listado", []) if data else []
     print(f"Total activas en Chile: {len(activas)}")
- 
+
     candidatas = [l for l in activas if matchea_construccion(l.get("Nombre") or "")]
     print(f"Candidatas por palabra clave: {len(candidatas)}")
- 
+
     resultados = []
     hoy = datetime.now()
     for idx, lic in enumerate(candidatas):
@@ -406,7 +413,7 @@ if RUN_LICITACIONES:
                     dias_restantes = (datetime.fromisoformat(fecha_cierre_str) - hoy).days
                 except ValueError:
                     pass
- 
+
             if "Metropolitana" in region and estado == "Publicada":
                 nombre_lic = detalle.get("Nombre")
                 base = {
@@ -419,6 +426,7 @@ if RUN_LICITACIONES:
                     "FechaCierre": fecha_cierre_str,
                     "MontoEstimado": detalle.get("MontoEstimado"),
                     "Moneda": detalle.get("Moneda", ""),
+                    "Link": URL_FICHA_LICITACION.format(codigo=codigo),
                     "Categorias": ", ".join(categorias_match(nombre_lic or "")),
                 }
                 items = (detalle.get("Items", {}) or {}).get("Listado", []) or []
@@ -442,32 +450,33 @@ if RUN_LICITACIONES:
                                  "CodigoONU": "", "CategoriaONU": ""})
                     resultados.append(fila)
         time.sleep(2)
- 
+
     df_lineas = pd.DataFrame(resultados)
     if not df_lineas.empty:
         df_lineas = df_lineas.sort_values(["DiasParaCierre", "Codigo", "Linea"])
         df_lic = df_lineas.drop_duplicates("Codigo")[
             ["Codigo", "NombreLicitacion", "TipoLicitacion", "Organismo", "Comuna",
-             "DiasParaCierre", "FechaCierre", "MontoEstimado", "Moneda", "Categorias"]
+             "DiasParaCierre", "FechaCierre", "MontoEstimado", "Moneda",
+             "Categorias", "Link"]
         ].reset_index(drop=True)
         monto_total = df_lic["MontoEstimado"].fillna(0).sum()
         print(f"\nLicitaciones RM Publicadas: {len(df_lic)}")
         print(f"Monto estimado total: ${monto_total:,.0f}".replace(",", "."))
- 
- 
+
+
 # ==========================================================================
 # MÓDULO 2: COMPRA ÁGIL (API v2, RM = región 13)
 # ==========================================================================
 df_ca = pd.DataFrame()
 df_ca_productos = pd.DataFrame()
- 
+
 if RUN_COMPRA_AGIL:
     print("\n" + "=" * 60)
     print("MÓDULO 2: COMPRA ÁGIL — RM, estado publicada")
     print("=" * 60)
     ca_items = {}
     abortar = False
- 
+
     for q in CA_QUERIES:
         if abortar:
             break
@@ -489,9 +498,9 @@ if RUN_COMPRA_AGIL:
             params["numero_pagina"] += 1
             time.sleep(1)
         time.sleep(1)
- 
+
     print(f"  Compras Ágiles únicas encontradas: {len(ca_items)}")
- 
+
     filas_ca, filas_prod = [], []
     hoy_utc = datetime.now(timezone.utc)
     for idx, (codigo, item) in enumerate(ca_items.items()):
@@ -507,7 +516,7 @@ if RUN_COMPRA_AGIL:
             break
         if not det:
             continue
- 
+
         fechas = det.get("fechas", {}) or {}
         fecha_cierre = fechas.get("fecha_cierre")
         dias = None
@@ -519,18 +528,18 @@ if RUN_COMPRA_AGIL:
                 dias = (fc - hoy_utc).days
             except (ValueError, TypeError):
                 pass
- 
+
         presupuesto = det.get("presupuesto", {}) or {}
         inst = det.get("institucion", {}) or {}
         conv = det.get("convocatoria", {}) or {}
- 
+
         # Convocatoria: la Compra Ágil puede tener dos llamados para ofertar.
         # estado_convocatoria: 1 = primer llamado, 2 = segundo llamado.
         # Las fechas de cierre de cada llamado solo vienen en el DETALLE.
         etapa = conv.get("estado_convocatoria")
         cierre_1 = conv.get("fecha_cierre_primer_llamado")
         cierre_2 = conv.get("fecha_cierre_segundo_llamado")
- 
+
         filas_ca.append({
             "Codigo": codigo,
             "Nombre": det.get("nombre", nombre),
@@ -550,6 +559,7 @@ if RUN_COMPRA_AGIL:
             "MontoDisponibleCLP": presupuesto.get("monto_disponible_clp"),
             "OfertasRecibidas": (det.get("resumen", {}) or {}).get("total_ofertas_recibidas"),
             "Categorias": ", ".join(categorias_match(det.get("nombre", nombre))),
+            "Link": URL_FICHA_COMPRA_AGIL.format(codigo=codigo),
         })
         for prod in det.get("productos_solicitados", []) or []:
             filas_prod.append({
@@ -561,7 +571,7 @@ if RUN_COMPRA_AGIL:
                 "CodigoProducto": prod.get("codigo_producto", ""),
             })
         time.sleep(1)
- 
+
     df_ca = pd.DataFrame(filas_ca)
     df_ca_productos = pd.DataFrame(filas_prod)
     if not df_ca.empty:
@@ -569,8 +579,8 @@ if RUN_COMPRA_AGIL:
         print(f"\nCompras Ágiles RM de construcción: {len(df_ca)}")
         print(f"Monto disponible total: "
               f"${df_ca['MontoDisponibleCLP'].fillna(0).sum():,.0f}".replace(",", "."))
- 
- 
+
+
 # ==========================================================================
 # MÓDULO 3: ÓRDENES DE COMPRA — análisis de precios por producto + unidad
 # ==========================================================================
@@ -578,7 +588,7 @@ df_oc = pd.DataFrame()
 df_oc_lineas = pd.DataFrame()
 df_oc_limpias = pd.DataFrame()
 df_precios = pd.DataFrame()
- 
+
 if RUN_ORDENES_COMPRA:
     print("\n" + "=" * 60)
     print(f"MÓDULO 3: ÓRDENES DE COMPRA (últimos {OC_DIAS_ATRAS} días, estado {OC_ESTADO})")
@@ -593,9 +603,9 @@ if RUN_ORDENES_COMPRA:
         print(f"    Total día: {len(listado)} | Candidatas construcción: {len(matches)}")
         candidatas_oc.extend(matches)
         time.sleep(2)
- 
+
     print(f"  Total OCs candidatas: {len(candidatas_oc)}")
- 
+
     filas_oc, filas_oc_lineas = [], []
     for idx, oc in enumerate(candidatas_oc):
         codigo = oc.get("Codigo")
@@ -642,10 +652,10 @@ if RUN_ORDENES_COMPRA:
                     "Moneda": item.get("Moneda", det.get("Moneda", "")),
                 })
         time.sleep(2)
- 
+
     df_oc = pd.DataFrame(filas_oc)
     df_oc_lineas = pd.DataFrame(filas_oc_lineas)
- 
+
     # ---------- Histórico acumulado de líneas de OC (crece en cada corrida) ----
     # Se carga siempre, incluso si la corrida no trajo líneas nuevas: así el
     # benchmark sigue publicándose un fin de semana o si la API falla.
@@ -663,7 +673,7 @@ if RUN_ORDENES_COMPRA:
     except Exception as e:
         print(f"  (No se pudo actualizar el histórico: {e})")
         hist = df_oc_lineas.copy()
- 
+
     # ---------- Benchmark de precios: material x formato x dimensión ----------
     base_precios = hist if not hist.empty else df_oc_lineas
     if not base_precios.empty:
@@ -676,7 +686,7 @@ if RUN_ORDENES_COMPRA:
         b["Cantidad"] = pd.to_numeric(b["Cantidad"], errors="coerce")
         b = b[b["PrecioNeto"].notna() & (b["PrecioNeto"] > 0)]
         n_bruto = len(b)
- 
+
         # Paso 1: descartar líneas canasta (suma alzada, no precio unitario)
         b["EsCanasta"] = [
             es_linea_canasta(e, c, p)
@@ -684,7 +694,7 @@ if RUN_ORDENES_COMPRA:
         ]
         n_canasta = int(b["EsCanasta"].sum())
         b = b[~b["EsCanasta"]]
- 
+
         # Paso 2: leer material, formato y dimensión del texto del comprador
         b["Material"] = b["EspecificacionComprador"].map(material_real)
         b["Formato"] = b["EspecificacionComprador"].map(formato_venta)
@@ -692,7 +702,7 @@ if RUN_ORDENES_COMPRA:
             dimension(e, m) for e, m in zip(b["EspecificacionComprador"], b["Material"])
         ]
         df_oc_limpias = b[b["Material"].notna()].copy()
- 
+
         # Paso 3: agrupar y recortar outliers dentro de cada grupo
         filas_bench = []
         for (mat, fmt, dim), sub in df_oc_limpias.groupby(
@@ -723,7 +733,7 @@ if RUN_ORDENES_COMPRA:
                 "EjemploEspecificacion": str(
                     sub["EspecificacionComprador"].iloc[0])[:90],
             })
- 
+
         df_precios = pd.DataFrame(filas_bench)
         if not df_precios.empty:
             df_precios["Confiabilidad"] = pd.cut(
@@ -734,7 +744,7 @@ if RUN_ORDENES_COMPRA:
             df_precios = df_precios.sort_values(
                 ["Confiabilidad", "NumLineas"], ascending=[True, False]
             ).reset_index(drop=True)
- 
+
         print(f"\nOCs de construcción encontradas: {len(df_oc)}")
         print(f"Líneas con precio (CLP, histórico): {n_bruto}")
         print(f"  - descartadas por ser canasta/suma alzada: {n_canasta}")
@@ -743,8 +753,8 @@ if RUN_ORDENES_COMPRA:
         if not df_precios.empty:
             n_alta = int((df_precios["Confiabilidad"] == "Alta").sum())
             print(f"  de ellas, confiabilidad Alta: {n_alta}")
- 
- 
+
+
 # ==========================================================================
 # GRÁFICO (licitaciones) + EXPORTACIÓN A EXCEL
 # ==========================================================================
@@ -769,7 +779,7 @@ if not df_oc_limpias.empty:
         "Formato", "Dimension", "Cantidad", "PrecioNeto",
         "EspecificacionComprador", "Producto",
     ]]
- 
+
 grafico_ok = False
 if not df_lic.empty:
     df_plot = df_lic.copy()
@@ -781,11 +791,11 @@ if not df_lic.empty:
     if len(df_plot) > 30:
         df_plot = df_plot.nlargest(30, "MontoEstimado")
     df_plot = df_plot.sort_values("MontoEstimado")
- 
+
     cats = df_plot["CategoriaPrincipal"].unique()
     cmap = plt.get_cmap("tab20", max(len(cats), 1))
     color_por_cat = {c: cmap(i) for i, c in enumerate(cats)}
- 
+
     alto = max(4, 0.45 * len(df_plot))
     fig, ax = plt.subplots(figsize=(12, alto))
     barras = ax.barh(df_plot["Codigo"], df_plot["MontoEstimado"],
@@ -806,7 +816,7 @@ if not df_lic.empty:
     fig.savefig(GRAFICO_PATH, dpi=150)
     plt.close(fig)
     grafico_ok = True
- 
+
 if hojas:
     with pd.ExcelWriter(EXCEL_PATH, engine="openpyxl") as writer:
         for nombre, df_hoja in hojas.items():
@@ -817,12 +827,27 @@ if hojas:
             ws.cell(row=fila_total, column=1, value="TOTAL")
             ws.cell(row=fila_total, column=8,
                     value=float(df_lic["MontoEstimado"].fillna(0).sum()))
+        # Columna Link: hipervínculo real y clickeable en Excel
+        for nombre_hoja in ("Licitaciones", "CompraAgil"):
+            if nombre_hoja not in hojas:
+                continue
+            ws_l = writer.sheets[nombre_hoja]
+            encabezados = [c.value for c in ws_l[1]]
+            if "Link" not in encabezados:
+                continue
+            col = encabezados.index("Link") + 1
+            for fila in range(2, ws_l.max_row + 1):
+                celda = ws_l.cell(row=fila, column=col)
+                if celda.value:
+                    celda.hyperlink = celda.value
+                    celda.value = "Ver ficha"
+                    celda.style = "Hyperlink"
         if grafico_ok:
             ws_g = writer.book.create_sheet("Grafico")
             ws_g.add_image(XLImage(GRAFICO_PATH), "B2")
     print(f"\n✅ Exportado a {EXCEL_PATH}")
- 
- 
+
+
 # ==========================================================================
 # DASHBOARD HTML (docs/index.html, publicado por GitHub Pages)
 # ==========================================================================
@@ -833,18 +858,37 @@ def fmt_clp(v):
         return f"${v:,.0f}".replace(",", ".")
     except Exception:
         return v
- 
- 
-def tabla_html(df, cols_monto=(), max_rows=None):
+
+
+def tabla_html(df, cols_monto=(), max_rows=None, enlaces=None):
+    """enlaces: {columna: plantilla_url} vuelve esa columna un link clickeable."""
     if df.empty:
         return "<p class='vacio'>Sin resultados en esta corrida.</p>"
     d = df.copy() if max_rows is None else df.head(max_rows).copy()
     for c in cols_monto:
         if c in d.columns:
             d[c] = d[c].apply(fmt_clp)
-    return d.to_html(index=False, border=0, classes="tabla", na_rep="")
- 
- 
+    if not enlaces:
+        return d.to_html(index=False, border=0, classes="tabla", na_rep="")
+
+    # Vamos a insertar HTML propio, así que escapamos el resto del texto a mano
+    for c in d.columns:
+        if c not in enlaces:
+            d[c] = d[c].apply(
+                lambda v: "" if pd.isna(v) else escape_html(str(v)))
+    for col, plantilla in enlaces.items():
+        if col not in d.columns:
+            continue
+        d[col] = d[col].apply(
+            lambda v: "" if pd.isna(v) or not str(v).strip() else
+            '<a href="{url}" target="_blank" rel="noopener">{txt}</a>'.format(
+                url=escape_html(plantilla.format(codigo=quote(str(v), safe="")),
+                                quote=True),
+                txt=escape_html(str(v))))
+    return d.to_html(index=False, border=0, classes="tabla", na_rep="",
+                     escape=False)
+
+
 ahora_cl = datetime.now(TZ_CHILE).strftime("%d-%m-%Y %H:%M")
 n_lic = len(df_lic)
 monto_lic = fmt_clp(df_lic["MontoEstimado"].fillna(0).sum()) if not df_lic.empty else "$0"
@@ -854,7 +898,7 @@ n_oc = len(df_oc)
 n_prod = len(df_precios)
 n_alta_conf = (int((df_precios["Confiabilidad"] == "Alta").sum())
                if not df_precios.empty else 0)
- 
+
 html = f"""<!doctype html>
 <html lang="es">
 <head>
@@ -911,22 +955,26 @@ html = f"""<!doctype html>
     <div class="kpi"><div class="v">{n_prod}</div><div class="l">Precios de referencia</div></div>
     <div class="kpi"><div class="v">{n_alta_conf}</div><div class="l">De confiabilidad alta</div></div>
   </div>
- 
+
   <section class="acciones">
     <a href="mercado_publico_construccion_RM.xlsx">⬇ Descargar Excel completo</a>
     <a href="historico_oc_lineas.csv">⬇ Histórico de precios (CSV)</a>
   </section>
- 
+
   <section>
     <h2>Licitaciones RM (estado Publicada)</h2>
-    {tabla_html(df_lic, cols_monto=["MontoEstimado"])}
+    {tabla_html(df_lic.drop(columns=["Link"], errors="ignore"),
+                cols_monto=["MontoEstimado"],
+                enlaces={"Codigo": URL_FICHA_LICITACION})}
+    <p class="nota">El código de cada licitación abre su ficha en Mercado
+    Público, en una pestaña nueva.</p>
   </section>
- 
+
   <section>
     <h2>Gráfico: monto y días para cierre</h2>
     {('<img src="grafico_licitaciones.png" alt="Gráfico licitaciones">' if grafico_ok else "<p class='vacio'>Sin gráfico en esta corrida.</p>")}
   </section>
- 
+
   <section>
     <h2>Compras Ágiles RM (publicadas)</h2>
     {tabla_html(
@@ -934,7 +982,8 @@ html = f"""<!doctype html>
                "CierrePrimerLlamado", "CierreSegundoLlamado", "DiasParaCierre",
                "MontoDisponibleCLP", "OfertasRecibidas", "Categorias"]]
         if not df_ca.empty else df_ca,
-        cols_monto=["MontoDisponibleCLP"])}
+        cols_monto=["MontoDisponibleCLP"],
+        enlaces={"Codigo": URL_FICHA_COMPRA_AGIL})}
     <div class="leyenda">
       <b>Cómo leer los llamados.</b> Una Compra Ágil se puede ofertar en hasta
       dos llamados. Lo primero que hay que mirar es la columna
@@ -948,10 +997,11 @@ html = f"""<!doctype html>
       La columna <b>Llamado</b> dice en cuál está abierta en este momento
       ("Primer llamado" o "Segundo llamado"), y <b>DiasParaCierre</b> cuenta los
       días hasta el cierre de ese llamado vigente — no hasta el primero.
-      Las horas están en hora de Chile.
+      Las horas están en hora de Chile. El código abre la ficha en Mercado
+      Público, en una pestaña nueva.
     </div>
   </section>
- 
+
   <section>
     <h2>Precios de referencia (histórico acumulado)</h2>
     <p class="nota">Precio unitario en CLP por material y formato de venta.
@@ -972,8 +1022,7 @@ html = f"""<!doctype html>
 <footer>Fuente: API Mercado Público (ChileCompra) · Generado automáticamente con GitHub Actions</footer>
 </body>
 </html>"""
- 
+
 with open(HTML_PATH, "w", encoding="utf-8") as f:
     f.write(html)
 print(f"✅ Dashboard generado en {HTML_PATH}")
- 
