@@ -30,6 +30,10 @@
                  text-decoration:none; padding:10px 18px; border-radius:8px;
                  margin-right:10px; font-size:.9rem; }
   .vacio { color:#888; }
+  .alerta { background:#fff4e5; border-left:4px solid #e8820c; padding:12px 14px;
+             margin:0 0 14px; border-radius:4px; line-height:1.5; }
+  .alerta.ok { background:#eef5ee; border-left-color:#4a8f4a; }
+  .alerta .chico { font-size:.85rem; color:#666; }
   .nota { font-size:.82rem; color:#555; margin:0 0 12px; line-height:1.45; }
   .leyenda { font-size:.82rem; color:#444; line-height:1.5; margin-top:14px;
               padding:12px 14px; background:#f7f9fb;
@@ -42,7 +46,7 @@
 <body>
 <header>
   <h1>Monitor Mercado Público — Materiales de Construcción (RM)</h1>
-  <p>Última actualización: 09-11-2026 17:00 (hora de Chile)</p>
+  <p>Última actualización: 09-11-2026 17:32 (hora de Chile)</p>
 </header>
 <main>
   <div class="kpis">
@@ -50,7 +54,7 @@
     <div class="kpi"><div class="v">$385.161.724</div><div class="l">Monto estimado licitaciones</div></div>
     <div class="kpi"><div class="v">0</div><div class="l">Compras Ágiles RM publicadas</div></div>
     <div class="kpi"><div class="v">$0</div><div class="l">Monto disponible Compra Ágil</div></div>
-    <div class="kpi"><div class="v">191</div><div class="l">OCs analizadas (precios)</div></div>
+    <div class="kpi"><div class="v">190</div><div class="l">OCs analizadas (precios)</div></div>
     <div class="kpi"><div class="v">121</div><div class="l">Precios de referencia</div></div>
     <div class="kpi"><div class="v">51</div><div class="l">De confiabilidad alta</div></div>
   </div>
@@ -211,6 +215,7 @@
 
   <section>
     <h2>Compras Ágiles RM (publicadas)</h2>
+    <div class="alerta"><b>No se pudo consultar la API de Compra Ágil en esta corrida.</b><br>El servidor de ChileCompra no alcanzó a responder (error 504). Es una caída de ellos, no un problema de este monitor: cuando se restablezca, los datos vuelven solos.<br>No hay una consulta previa guardada para mostrar en su lugar.<br><span class="chico">Intento: 09-11-2026 17:32 (hora de Chile). Los otros dos módulos usan una API distinta y no se ven afectados.</span></div>
     <p class='vacio'>Sin resultados en esta corrida.</p>
     <div class="leyenda">
       <b>Cómo leer los llamados.</b> Una Compra Ágil se puede ofertar en hasta
